@@ -61,12 +61,14 @@ struct MessageQueue {
 
 std::vector< MessageQueue* > V;
 
+std::random_device rd;  //Will be used to obtain a seed for the random number engine
+std::mt19937 gen(rd()); //Standard mersenne_twister_engine seeded with rd()
+std::uniform_real_distribution<> distrib(0, 1);
+
 bool random_chance( size_t chance)
 {
-	std::random_device rd;  //Will be used to obtain a seed for the random number engine
-	std::mt19937 gen(rd()); //Standard mersenne_twister_engine seeded with rd()
-	std::uniform_int_distribution<> distrib(1, 57);
-	return ( distrib(gen) % chance) == 0;
+	return false;
+	//return distrib(gen) <= (1.0 / (double) chance);
 }
 
 void alter_message(json & msg)
@@ -141,7 +143,6 @@ void oversimplify(MessageQueue* q)
 	{
 
 		q->stepping_counter();
-	// DO SOMETHING
 
 		cout << i << endl;
 
@@ -165,6 +166,39 @@ void oversimplify(MessageQueue* q)
 		}
 
 		i++;
+	}
+}
+
+void receiver(MessageQueue* q)
+{
+	array<int, MAX_PROC_NUM> alters;
+	alters.fill(0);
+
+	auto start = std::chrono::steady_clock::now();
+	while (since(start).count() < 6000)
+	{
+		q->stepping_counter();
+
+		while (q->hasMessage()) {
+			json msg;
+			recv(q->id, msg);
+			int from = msg["sender"];
+
+			q->received_counts[from]++;
+
+			if (!inspect_message(msg))
+			{
+				alters[from]++;
+			}
+
+			q->stepping_counter();
+			std::cout << msg.dump() + "\n"; //+ " receiver cycle: " + to_string(epoch) + " receiver time: " + to_string(q->counter) + "\n";
+			//cout << "Received " + to_string(from) << endl;
+
+			q->inconsistency_counts[from] = msg["sent_count"] - (q->received_counts[from] - alters[from]);
+		}
+
+
 	}
 }
 
@@ -196,17 +230,18 @@ void sender(MessageQueue* q)
 	}
 }
 
-void receiver(MessageQueue* q, array<size_t, MAX_PROC_NUM>& inc)
+
+void send_receive(MessageQueue* q)
 {
 	array<int, MAX_PROC_NUM> alters;
 	alters.fill(0);
 
 	auto start = std::chrono::steady_clock::now();
-	size_t epoch = 0;
-	while (since(start).count() < 6000)
+	while (since(start).count() < 3000)
 	{
 		q->stepping_counter();
 
+		// Receive messages in queue
 		while (q->hasMessage()) {
 			json msg;
 			recv(q->id, msg);
@@ -220,86 +255,78 @@ void receiver(MessageQueue* q, array<size_t, MAX_PROC_NUM>& inc)
 			}
 
 			q->stepping_counter();
-			std::cout << msg.dump() + "\n"; //+ " receiver cycle: " + to_string(epoch) + " receiver time: " + to_string(q->counter) + "\n";
-			//cout << "Received " + to_string(from) << endl;
 
 			q->inconsistency_counts[from] = msg["sent_count"] - (q->received_counts[from] - alters[from]);
 		}
 
-		epoch++;
+		// Randomly send messages to everyone
+		if (!random_chance(2000))
+		{
+			for (int p = 0; p < MAX_PROC_NUM; p++)
+			{
+				if (p != q->id)
+				{
+					q->stepping_counter();
+					q->sent_counts[p]++;
+
+					json msg;
+					msg["sender"] = q->id;
+					msg["time"] = q->counter;
+					msg["receiver"] = p;
+					msg["sent_count"] = q->sent_counts[p];
+					msg["txt_msg"] = "Hello World!";
+					send(p, msg);
+				}
+			}
+		}
 	}
 }
 
 int main()
 {
-	vector<array<size_t, MAX_PROC_NUM>> inconsistencies;
-	inconsistencies.emplace_back(array<size_t, MAX_PROC_NUM>());
-	inconsistencies.emplace_back(array<size_t, MAX_PROC_NUM>());
-	inconsistencies[0].fill(0);
-	inconsistencies[1].fill(0);
-
 	V.emplace_back(new MessageQueue(0));
 	V.emplace_back(new MessageQueue(1));
 	V.emplace_back(new MessageQueue(2));
 	V.emplace_back(new MessageQueue(3));
 
-	thread first(sender, V[0]);
-	thread second(receiver, V[1], ref(inconsistencies[0]));
-	thread third(sender, V[2]);
-	thread fourth(receiver, V[3], ref(inconsistencies[1]));
-
-	//thread first(oversimplify, V[0]);
-	//thread second(oversimplify, V[1]);
-	//thread third(oversimplify,V[2]);
-
+	thread first(send_receive, V[0]);
+	thread second(send_receive, V[1]);
+	thread third(send_receive, V[2]);
+	thread fourth(send_receive, V[3]);
 
 	first.join();
 	second.join();
 	third.join();
 	fourth.join();
 
-
-	/*for (int i = 0; i < inconsistencies.size(); i++)
-	{
-		array<size_t, MAX_PROC_NUM> inc = inconsistencies[i];
-		cout << "Inconsistencies found by receiver" << i+1 <<" by ID: ";
-		for (size_t j : inc)
-		{
-			cout << j << ", ";
-		}
-		cout << endl << endl;
-	}*/
-
-	cout << left;
 	cout << endl;
 
+	// Print the objects
 	for (int p = 0; p < MAX_PROC_NUM; p++)
 	{
 		MessageQueue* q = V[p];
-		cout << setw(57) << " No. of messages sent by V[" + to_string(p) + "] to each player: ";
+		cout << left << setw(57) << " No. of messages sent by V[" + to_string(p) + "] to each player: ";
 		for (size_t j : q->sent_counts)
 		{
-			cout << setw(3) << j << ", ";
+			cout << right << setw(4) << j << ", ";
 		}
 		cout << endl;
-		cout << setw(57) << " No. of messages received by V[" + to_string(p) + "] from each player: ";
+		cout << left << setw(57) << " No. of messages received by V[" + to_string(p) + "] from each player: ";
 		for (size_t j : q->received_counts)
 		{
-			cout << setw(3) << j << ", ";
+			cout << right << setw(4) << j << ", ";
 		}
 		cout << endl;
-		cout << setw(57) <<  " No. of inconsistencies found by V[" + to_string(p) + "] from each player: ";
+		cout << left << setw(57) <<  " No. of inconsistencies found by V[" + to_string(p) + "] from each player: ";
 		for (size_t j : q->inconsistency_counts)
 		{
-			cout << setw(3) << j << ", ";
+			cout << right << setw(4) << j << ", ";
 		}
-		cout << endl << endl;
+		cout << endl;
 	}
 
 	for (auto& ref : V)
 		delete ref;
-
-	cout << "\n\n Hello World";
 
 	return 0;
 }
@@ -313,5 +340,81 @@ int main()
 	the receiver then checks how many total messages it has received from the sender and calculate the inconsistency (if any)
 
 	start from one sender and one receiver
+
+*/
+
+/*
+
+Main:
+
+	Set the randomiser seed for the deck	// I really want to talk about this, how to synchronise the randomiser seed between players
+
+
+Start of the thread:
+	
+	Initialise the board (probably a std::list !!, since you can emplace to the back and front)
+	Initialise the deck array
+	Initialise the hand vector
+	Retrieve 4-6 random tiles (per player)
+	Set state to 0
+	start the player loop
+
+Player loop:
+	
+	While (hasMessage()):
+		resolve messages		// Different part of the model
+
+	if it's your turn (state == id):
+		
+		check your hand against the board
+		if you have a tile available:
+			send a TILE_PLACED message to each player with tile's information and its position on the board
+			place the tile on the board
+			remove it from your hand
+		if no tile is available:
+			send a PLAYER_DRAW message
+			draw the top tile from the pile
+
+		Send END_TURN message
+		increment the stage counter to next player's ID
+
+
+
+	Randomly send out a snapshot after a specific amount of time
+
+
+
+Resolve messages by message type:
+	
+	END_TURN:
+		state = (state + 1) % no_of_players
+
+	PLAYER_DRAW:
+		pop the top tile off the deck
+
+	TILE_PLACED:
+		place the received tile to the specified end of the board
+
+	TILE_CHECK (optional/not sure if necessary):
+		Check if the received tile is in your hand 
+		Send a possitive or negative response back
+
+	TILE_CHECK_RESPONSE (same as above):
+		wait for everyone's responses 
+		if check passes - continue on
+		if not - inconsistency detected, possibly launch a snapshot algorithm
+
+
+
+	
+Drawing tiles:
+
+
+
+
+*/
+
+/*
+	
 
 */
