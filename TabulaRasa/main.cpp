@@ -303,9 +303,6 @@ void start_game(MessageQueue* q)
 	{
 		std::uniform_int_distribution<> dist(0, 10000);
 		seed = dist(gen);
-		seed = 100;
-
-		cout << seed;
 
 		json msg;
 		msg["sender"] = q->id;
@@ -323,7 +320,7 @@ void start_game(MessageQueue* q)
 			}
 		}
 
-		/*DominoInconsistency dinc[MAX_PROC_NUM];
+		DominoInconsistency dinc[MAX_PROC_NUM];
 		dinc[q->id].player_won = winner;
 		dinc[q->id].seed = seed;
 		size_t msg_count = 0;
@@ -333,21 +330,41 @@ void start_game(MessageQueue* q)
 			if (q->hasSnapshotMessage())
 			{
 				json msg;
-				recv(q->id, msg);
+				srecv(q->id, msg);
 				int from = msg["sender"];
+				MESSAGE_TYPE type = msg["type"];
 
-				if (msg["type"] == INCONSISTENCY_CHECK)
+				if (type == INCONSISTENCY_CHECK)
 				{
 					dinc[from].seed = msg["seed"];
 					dinc[from].player_won = msg["player_won"];
 				}
 				msg_count++;
 
-				// comment out unless we decide to count special messages q->received_counts[from]++;
+				// comment out unless we decide to count special messages 
+				// q->received_counts[from]++;
 			}
 		}
 
-		equivalence_class<int> eq_class;
+
+		// Send out safe message confirming the seed
+		for (int i = 0; i < MAX_PROC_NUM; i++)
+		{
+			json msg;
+			msg["sender"] = q->id;
+			msg["receiver"] = i;
+			msg["type"] = SEED;
+			msg["seed"] = seed;
+
+			ssend(i, msg);
+		}
+
+		// We would usually do the equivalence class but since we are the host
+		// we know what the true seed is
+        // Equivallence class example
+		/* equivalence_class<int> eq_class;
+
+
 
 		for (int i = 0; i < MAX_PROC_NUM; i++)
 		{
@@ -357,13 +374,14 @@ void start_game(MessageQueue* q)
 
 				if (res == 0)
 				{
-					// do the equivalence class
-
-					eq_class.insert(i, j);
+					
+					//eq_class.insert(i, j);
 				}
 			}
 		}
 
+		
+		
 		size_t max_size = 0;
 		unordered_set<int> candidate_set;
 		for (const auto & pair : eq_class.calculateEquivalenceClass())
@@ -373,8 +391,8 @@ void start_game(MessageQueue* q)
 				candidate_set = pair.second;
 				max_size = pair.second.size();
 			}
-		}*/
-
+		}
+		*/
 
 	}
 	else
@@ -396,14 +414,30 @@ void start_game(MessageQueue* q)
 				//cout << seed;
 
 				//send snapshot to "from" or just 0
-				/*json out_msg;
+				json out_msg;
 				out_msg["type"] = INCONSISTENCY_CHECK;
 				out_msg["receiver"] = from;
 				out_msg["sender"] = q->id;
 				out_msg["seed"] = seed;
 				out_msg["player_won"] = winner;
 
-				ssend(from, out_msg);*/
+				ssend(from, out_msg);
+
+				break;
+			}
+		}
+
+		while (true)
+		{
+			if (q->hasSnapshotMessage())
+			{
+				json msg;
+				srecv(q->id, msg);
+				int from = msg["sender"];
+				if (msg["type"] == SEED)
+				{
+					seed = msg["seed"];
+				}
 
 				break;
 			}
@@ -523,7 +557,6 @@ void start_game(MessageQueue* q)
 					msg["time"] = q->counter; // ask about the counter
 
 					send(p, msg);
-					cout << "Message sent to " + to_string(p) + " \n";
 
 					q->sent_counts[p]++;
 
@@ -576,7 +609,6 @@ void start_game(MessageQueue* q)
 					skip_counter = 0;
 
 					string t = msg["tile"].dump();
-					cout << "this is: " << q->id << ", receiving from:" << from << ", message received: " << t << endl;
 
 					break;
 				}
