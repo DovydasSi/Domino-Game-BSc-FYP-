@@ -18,9 +18,30 @@
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="messageQueue.h">
+      <Filter>Header Files</Filter>
+    </ClCompile>
+    <ClCompile Include="dominoes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Inconsistency.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="json.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="constants.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="dominos.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Inconsistency.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="equivalence_Classes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

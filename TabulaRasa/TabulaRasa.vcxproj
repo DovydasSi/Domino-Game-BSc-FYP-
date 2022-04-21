@@ -87,6 +87,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -138,9 +139,16 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Inconsistency.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="messageQueue.h" />
+    <ClCompile Include="dominoes.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="constants.h" />
+    <ClInclude Include="dominos.h" />
+    <ClInclude Include="equivalence_Classes.h" />
+    <ClInclude Include="Inconsistency.h" />
     <ClInclude Include="json.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
