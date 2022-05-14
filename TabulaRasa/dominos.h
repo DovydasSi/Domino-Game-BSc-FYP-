@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
+#include "json.h"
 
 using namespace std;
 
@@ -63,6 +64,7 @@ struct PlayerMoveInfo
 
 	PlayerMoveInfo(size_t id, DominoPiece pc, bool front) : m_player_id(id), m_piece(pc), m_in_front(front)
 	{}
+	PlayerMoveInfo() : m_player_id(0), m_piece(), m_in_front(false) {}
 };
 
 struct DominoBoard
@@ -72,6 +74,10 @@ struct DominoBoard
 
 	// add an array of chronological actions
 
+	bool empty()
+	{
+		return board.empty();
+	}
 
 	void add_piece(const DominoPiece pc, bool front, size_t p_id)
 	{
@@ -120,6 +126,12 @@ struct DominoBoard
 	size_t repeated_tiles() const
 	{
 		vector<DominoPiece> sorted_board;
+
+		if (board.empty())
+		{
+			return 0;
+		}
+
 		for (const DominoPiece & pc : board)
 		{
 			if (pc.head > pc.tail)
@@ -145,6 +157,19 @@ struct DominoBoard
 		return total;
 	}
 
+	void reconstruct(vector<PlayerMoveInfo> new_bh)
+	{
+		board.clear();
+		board_history.clear();
+
+		for (PlayerMoveInfo& info : new_bh)
+		{
+			add_piece(info.m_piece, info.m_in_front, info.m_player_id);
+		}
+	}
+
+	static bool create_board_history(nlohmann::json msg, vector<PlayerMoveInfo>& new_bh);
+
 	friend ostream& operator<< (ostream& os, const DominoBoard& pc);
 };
 
@@ -154,4 +179,11 @@ struct DominoInconsistency
 {
 	int seed;
 	int player_won;
+
+	DominoInconsistency() : seed(-1), player_won(-1) {}
+	DominoInconsistency(const DominoInconsistency&) = default;
+	DominoInconsistency(DominoInconsistency&&) = default;
+
+	DominoInconsistency &operator= (const DominoInconsistency&) = default;
+	DominoInconsistency &operator= (DominoInconsistency&&) = default;
 };

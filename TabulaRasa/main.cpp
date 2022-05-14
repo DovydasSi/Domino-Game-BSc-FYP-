@@ -16,6 +16,14 @@ using namespace std;
 using namespace nlohmann;
 
 std::vector< MessageQueue* > V;
+std::vector< pair<size_t, double> > I;
+size_t total_turns = 0;
+
+std::mutex barrier;
+condition_variable cond_barrier;
+size_t barrier_count = 0;
+
+bool finished_game = false;
 
 std::random_device rd;  //Will be used to obtain a seed for the random number engine
 std::mt19937 gen(rd()); //Standard mersenne_twister_engine seeded with rd()
@@ -23,8 +31,8 @@ std::uniform_real_distribution<> distrib(0, 1);
 
 bool random_chance( size_t chance)
 {
-	return false;
-	//return distrib(gen) <= (1.0 / (double) chance);
+	//return false;
+	return distrib(gen) <= (1.0 / (double) chance);
 }
 
 void alter_message(json & msg)
@@ -34,11 +42,13 @@ void alter_message(json & msg)
 
 void send(size_t to, const nlohmann::json& message) {
 
-	bool sent;
+	bool sent = false;
 
 	unique_lock<mutex> uni_loc(V[to]->m_queue_mutex);
 
+#if DROP_MESSAGE
 	if (sent = !random_chance(DROP_ALTER_CHANCE)) // checking for drop
+#endif
 	{
 		V[to]->ordinary_message_queue.push(message.dump());
 	}
@@ -58,8 +68,9 @@ void recv(size_t self, nlohmann::json& out) {
 		std::string tmp = ref->ordinary_message_queue.front();
 		out = json::parse(tmp);
 
-#if ALTER_SEED
 		MESSAGE_TYPE type = out["type"];
+
+#if ALTER_SEED
 		if (type == SEED && random_chance(DROP_ALTER_CHANCE)) // checking for altering
 		{
 			std::uniform_int_distribution<> dist(0, 10000);
@@ -67,7 +78,7 @@ void recv(size_t self, nlohmann::json& out) {
 		}
 #endif
 #if ALTER_HAS_WON
-		if (random_chance(DROP_ALTER_CHANCE)) // checking for altering
+		if (type < DRAW && random_chance(DROP_ALTER_CHANCE)) // checking for altering
 		{
 			bool has_won = out["has_won"];
 
@@ -125,14 +136,14 @@ void generate_all_tiles(std::vector<DominoPiece>& deck)
 	}
 }
 
-float calc_local_incons(const DominoInconsistency & di_1, const DominoInconsistency & di_2)
+double calc_local_incons(const DominoInconsistency & di_1, const DominoInconsistency & di_2)
 {
-	float result = 0.f;
+	double result = 0;
 
-	float seed_inc = di_1.seed == di_2.seed ? 0.f : 1.f;
-	float win_inc = di_1.player_won == di_2.player_won ? 0.f : 1.f;
+	double seed_inc = di_1.seed == di_2.seed ? 0.f : 1.f;
+	double win_inc = di_1.player_won == di_2.player_won ? 0.f : 1.f;
 
-	result = (seed_inc + win_inc) / 2.f;
+	result = (seed_inc + win_inc);// / 2.f;
 
 	return result;
 }
@@ -320,9 +331,10 @@ void start_game(MessageQueue* q)
 			}
 		}
 
-		DominoInconsistency dinc[MAX_PROC_NUM];
-		dinc[q->id].player_won = winner;
-		dinc[q->id].seed = seed;
+		cout << "Player0 sent the seed: " + to_string(seed) + "\n";
+		
+		q->dinc.player_won = winner;
+		q->dinc.seed = seed;
 		size_t msg_count = 0;
 
 		while (msg_count < MAX_PROC_NUM-1)
@@ -336,8 +348,7 @@ void start_game(MessageQueue* q)
 
 				if (type == INCONSISTENCY_CHECK)
 				{
-					dinc[from].seed = msg["seed"];
-					dinc[from].player_won = msg["player_won"];
+					
 				}
 				msg_count++;
 
@@ -348,7 +359,7 @@ void start_game(MessageQueue* q)
 
 
 		// Send out safe message confirming the seed
-		for (int i = 0; i < MAX_PROC_NUM; i++)
+		/*for (int i = 0; i < MAX_PROC_NUM; i++)
 		{
 			json msg;
 			msg["sender"] = q->id;
@@ -357,43 +368,10 @@ void start_game(MessageQueue* q)
 			msg["seed"] = seed;
 
 			ssend(i, msg);
-		}
+		}*/
 
 		// We would usually do the equivalence class but since we are the host
 		// we know what the true seed is
-        // Equivallence class example
-		/* equivalence_class<int> eq_class;
-
-
-
-		for (int i = 0; i < MAX_PROC_NUM; i++)
-		{
-			for (int j = i + 1; j < MAX_PROC_NUM; j++)
-			{
-				float res = calc_local_incons(dinc[i], dinc[j]);
-
-				if (res == 0)
-				{
-					
-					//eq_class.insert(i, j);
-				}
-			}
-		}
-
-		
-		
-		size_t max_size = 0;
-		unordered_set<int> candidate_set;
-		for (const auto & pair : eq_class.calculateEquivalenceClass())
-		{
-			if (pair.second.size() > max_size)
-			{
-				candidate_set = pair.second;
-				max_size = pair.second.size();
-			}
-		}
-		*/
-
 	}
 	else
 	{
@@ -408,10 +386,12 @@ void start_game(MessageQueue* q)
 				if (msg["type"] == SEED)
 				{
 					seed = msg["seed"];
+
+					q->dinc.seed = seed;
 				}
 				q->received_counts[from]++;
 
-				//cout << seed;
+				cout << "Player" + to_string(q->id) + " received seed: " + to_string(seed) + "\n";
 
 				//send snapshot to "from" or just 0
 				json out_msg;
@@ -427,6 +407,7 @@ void start_game(MessageQueue* q)
 			}
 		}
 
+#if REPAIR_SEED
 		while (true)
 		{
 			if (q->hasSnapshotMessage())
@@ -437,11 +418,13 @@ void start_game(MessageQueue* q)
 				if (msg["type"] == SEED)
 				{
 					seed = msg["seed"];
+					q->dinc.seed = seed;
 				}
 
 				break;
 			}
 		}
+#endif // REPAIR_SEED
 	}
 
 	vector<DominoPiece> deck;
@@ -466,8 +449,65 @@ void start_game(MessageQueue* q)
 		deck.erase(deck.begin());
 	}
 
+
+#if NEW_INITIAL_TILE
+	if (q->id == 0)
+	{
+		DominoPiece pc = *deck.begin();
+
+		for (int i = 0; i < MAX_PROC_NUM; i++)
+		{
+			if (q->id == i)
+			{
+				continue;
+			}
+
+			json msg;
+			msg["sender"] = 0;
+			msg["type"] = INITIAL_TILE;
+			msg["time"] = q->counter;
+			msg["tile"] = pc.toString();
+			msg["receiver"] = i;
+
+			send(i, msg);
+		}
+
+		cout << "Player0 sent out the initial tile: " + pc.toString() + "\n";
+		q->board.add_piece(pc, false, 0);
+		deck.erase(deck.begin());
+	}
+	
+	if(q->id != 0)
+	{
+		auto wait = std::chrono::steady_clock::now();
+
+		while (true)
+		{
+			if (q->hasMessage())
+			{
+				json msg;
+				recv(q->id, msg);
+				int from = msg["sender"];
+				if (msg["type"] == INITIAL_TILE)
+				{
+					DominoPiece pc;
+					pc.tile_from_string(msg["tile"]);
+
+					cout << "Player" + to_string(q->id) + " received initial tile: " + pc.toString() + "\n";
+
+					q->board.add_piece(pc, false, 0);
+					deck.erase(deck.begin());
+				}
+				q->received_counts[from]++;
+			}
+
+			break;
+		}
+	}
+#else
 	q->board.add_piece(deck.front(), false, 0);
 	deck.erase(deck.begin());
+#endif // NEW_INITIAL_TILE
 
 	int stage = 0;
 
@@ -475,8 +515,11 @@ void start_game(MessageQueue* q)
 	alters.fill(0);
 
 	size_t skip_counter = 0;
+	bool snap_started = false;
+	int coordinator = -1;
 
 	auto start = std::chrono::steady_clock::now();
+	auto idle = std::chrono::steady_clock::now();
 
 	while (since(start).count() < 10000)
 	{
@@ -484,13 +527,20 @@ void start_game(MessageQueue* q)
 
 		json msg;
 
-		// Do turn
+		// Do your turn
 		if (stage == q->id)
 		{
+
+
+
+			idle = std::chrono::steady_clock::now();
+
 			//each turn will end with a message so start filling it now
 			msg["sender"] = q->id;
 
 			q->stepping_counter();
+
+			total_turns++;
 
 			//check for cards in hand against the board
 			bool can_place = false;
@@ -501,8 +551,34 @@ void start_game(MessageQueue* q)
 
 				// check if I'm trying to a card that's already on the borad, run consensus if is
 				// cons 
+				/*if(!q->board.empty())
+				{*/
+					if (can_place = q->board.check_back(pc))
+					{
+						q->board.add_piece(pc, false, q->id);
+						msg["type"] = TILE_PLACED_BACK;
+						msg["tile"] = pc.toString();
 
-				if (can_place = q->board.check_back(pc))
+						auto iter = hand.begin() + i;
+						hand.erase(iter);
+
+						skip_counter = 0;
+						break;
+					}
+					else if (can_place = q->board.check_front(pc))
+					{
+						q->board.add_piece(pc, true, q->id);
+						msg["type"] = TILE_PLACED_FRONT;
+						msg["tile"] = pc.toString();
+
+						auto iter = hand.begin() + i;
+						hand.erase(iter);
+
+						skip_counter = 0;
+						break;
+					}
+				/*}
+				else // First player gets a free tile placement 
 				{
 					q->board.add_piece(pc, false, q->id);
 					msg["type"] = TILE_PLACED_BACK;
@@ -512,21 +588,11 @@ void start_game(MessageQueue* q)
 					hand.erase(iter);
 
 					skip_counter = 0;
+					can_place = true;
 					break;
-				}
-				else if (can_place = q->board.check_front(pc))
-				{
-					q->board.add_piece(pc, true, q->id);
-					msg["type"] = TILE_PLACED_FRONT;
-					msg["tile"] = pc.toString();
-
-					auto iter = hand.begin() + i;
-					hand.erase(iter);
-
-					skip_counter = 0;
-					break;
-				}
+				}*/
 			}
+
 			if (!can_place)
 			{
 				// draw
@@ -574,10 +640,34 @@ void start_game(MessageQueue* q)
 				if (hand.empty())
 				{
 					winner = q->id;
+					q->dinc.player_won = winner;
+
+					for (int p = 0; p < MAX_PROC_NUM; p++)
+					{
+						json msg;
+						msg["sender"] = q->id;
+						msg["receiver"] = p;
+						msg["type"] = WINNER_CONFIRM;
+
+						ssend(p, msg);
+					}
 				}
+
+				unique_lock<mutex> uni_lock(barrier);
+				barrier_count = 0;
+				finished_game = true;
+				cond_barrier.notify_all();
+				uni_lock.unlock();
 
 				break;
 			}
+
+			unique_lock<mutex> uni_lock(barrier);
+			barrier_count++;
+			cond_barrier.wait(uni_lock);
+
+			//barrier_count = 0;
+			uni_lock.unlock();
 		}
 		// Receive message
 		else if (q->hasMessage())
@@ -585,6 +675,7 @@ void start_game(MessageQueue* q)
 			recv(q->id, msg);
 			int from = msg["sender"];
 
+			idle = std::chrono::steady_clock::now();
 
 			q->received_counts[from]++;
 
@@ -604,6 +695,34 @@ void start_game(MessageQueue* q)
 					string tile = msg["tile"];
 					DominoPiece pc;
 					pc.tile_from_string(tile);
+#if REPAIR_BOARD_HISTORY
+					// Compare tile with your hand
+					for (const DominoPiece& hand_piece : hand)
+					{
+						if (pc == hand_piece)
+						{
+							// Start snapshot if it's the same
+							json msg;
+							msg["type"] = INCONSISTENCY_CHECK;
+							msg["sender"] = q->id;
+							msg["time"] = q->counter;
+
+							for (size_t i = 0; i < MAX_PROC_NUM; i++)
+							{
+								if (q->id == i)
+								{
+									continue;
+								}
+
+								ssend(i, msg);
+
+								snap_started = true;
+								coordinator = q->id;
+							}
+						}
+					}
+#endif
+
 					q->board.add_piece(pc, type == TILE_PLACED_FRONT, from);
 
 					skip_counter = 0;
@@ -628,6 +747,24 @@ void start_game(MessageQueue* q)
 				default: break;
 			}
 
+			unique_lock<mutex> uni_lock(barrier);
+			if (!finished_game)
+			{
+				barrier_count++;
+				if (barrier_count == MAX_PROC_NUM)
+				{
+					barrier_count = 0;
+					I.emplace_back(total_turns, global_inconsistency(V));
+					cond_barrier.notify_all();
+				}
+				else
+				{
+					cond_barrier.wait(uni_lock);
+				}
+			}
+
+			uni_lock.unlock();
+
 			//q->counter = q->counter < msg_time ? msg_time : q->counter; // talk about this as well
 
 			q->stepping_counter();
@@ -641,17 +778,145 @@ void start_game(MessageQueue* q)
 					//cout << to_string(msg["sender"]);
 
 					winner = msg["sender"];
+					q->dinc.player_won = winner;
 				}
 				
 				break;
 			}
 		}
+		else if (since(idle).count() > 2000)
+		{
+			if (q->hasSnapshotMessage())
+			{
+				json msg;
+				srecv(q->id, msg);
+				int from = msg["sender"];
+
+#if REPAIR_HAS_WON // Check for missed winner
+				if (msg["type"] == WINNER_CONFIRM)
+				{
+					winner = from;
+					//q->dinc.player_won = winner;
+
+					cout << "Winner needed confirming \n";
+
+					break;
+				}
+#endif
+#if REPAIR_BOARD_HISTORY
+				if (msg["type"] == INCONSISTENCY_CHECK)
+				{
+					// send seed and winner information to "from"
+
+					json out_msg;
+					out_msg["type"] = SEED;
+					out_msg["sender"] = q->id;
+					out_msg["receiver"] = from;
+					out_msg["seed"] = seed;
+					out_msg["winner"] = winner;
+
+					ssend(from, out_msg);
+
+					snap_started = true;
+					coordinator = from;
+				}
+#endif
+			}
+			
+		}
+#if REPAIR_BOARD_HISTORY
+		if (snap_started && coordinator== q->id)
+		{
+			size_t msg_count = 0;
+			equivalence_class<size_t> eq;
+			array<DominoInconsistency, MAX_PROC_NUM> inc_arr;
+
+			while (msg_count < MAX_PROC_NUM)
+			{
+				if (q->hasSnapshotMessage())
+				{
+					json msg;
+					srecv(q->id, msg);
+
+					size_t from = msg["sender"];
+					MESSAGE_TYPE type = msg["type"];
+
+					if (type == SEED) // If we started the snapshot and got their info
+					{
+						// equivalence classes somewhere
+						int s = msg["seed"];
+						int w = msg["winner"];
+
+						inc_arr[from].player_won = w;
+						inc_arr[from].seed = s;
+						msg_count++;
+					}
+				}
+			}
+
+			for (int i = 0; i < MAX_PROC_NUM; i++)
+			{
+				for (int j = i; j < MAX_PROC_NUM; j++)
+				{
+					if (inc_arr[i].seed == inc_arr[j].seed && inc_arr[i].player_won == inc_arr[j].player_won)
+					{
+						eq.insert(i, j);
+					}
+				}
+			}
+
+
+			size_t max_size = 0;
+			size_t which = 0;
+
+			auto eq_pair = eq.calculateEquivalenceClass();
+
+			for (const auto & cp : eq_pair) 
+			{
+				if (max_size < cp.second.size())
+				{
+					max_size = cp.second.size();
+					which = cp.first;
+				}
+			}
+
+			auto & correct = eq_pair[which];
+			size_t corr_seed = inc_arr[*correct.begin()].seed;
+			size_t corr_winner = inc_arr[*correct.begin()].player_won;
+
+
+
+			// scan the board for the first turn of the player that isn't in the "correct"
+			// assume
+			// cut off board history from there
+			// refill your deck and reshuffle based on the seed from a "correct" player
+
+		}
+		else if (snap_started)
+		{
+			while (snap_started)
+			{
+				if (q->hasSnapshotMessage())
+				{
+					json msg;
+					srecv(q->id, msg);
+
+					size_t from = msg["sender"];
+					MESSAGE_TYPE type = msg["type"];
+
+					if (type == BOARD_HISTORY) // receiving the 
+					{
+
+					}
+				}
+			}
+		}
+#endif // REPAIR_BOARD_HISTORY
 	}
 }
 
 int main()
 {
-
 	for (int i = 0; i < MAX_PROC_NUM; i++)
 	{
 		V.emplace_back(new MessageQueue(i));
@@ -670,32 +935,68 @@ int main()
 	}
 
 	cout << endl;
+	//cout << setw(35) << " " << setw((8 * MAX_PROC_NUM)/2 + 5) << "Player IDs" << endl;
+	cout << setw(35) << " ";
+	for (int p = 0; p < MAX_PROC_NUM; p++)
+	{
+		//cout << "   ";
+		cout << right << setw(6) << "P" + to_string(p) << setw(2) << " |";
+	}
+	cout << endl << endl;
 
 	// Print the objects
 	for (int p = 0; p < MAX_PROC_NUM; p++)
 	{
 		MessageQueue* q = V[p];
-		cout << left << setw(57) << " No. of messages sent by V[" + to_string(p) + "] to each player: ";
+		cout << left << setw(35) << " No. of messages sent by P" + to_string(p) + ": ";
 		for (size_t j : q->sent_counts)
 		{
-			cout << right << setw(4) << j << ", ";
+			cout << right << setw(6) << j << " |";
 		}
 		cout << endl;
-		cout << left << setw(57) << " No. of messages received by V[" + to_string(p) + "] from each player: ";
+		cout << left << setw(35) << " No. of messages received by P" + to_string(p) + ": ";
 		for (size_t j : q->received_counts)
 		{
-			cout << right << setw(4) << j << ", ";
+			cout << right << setw(6) << j << " |";
 		}
 		cout << endl;
+		/*
 		cout << left << setw(57) <<  " No. of inconsistencies found by V[" + to_string(p) + "] from each player: ";
 		for (size_t j : q->inconsistency_counts)
 		{
 			cout << right << setw(4) << j << ", ";
 		}
 		cout << endl;
+		*/
+		cout << endl;
 	}
 
-	cout << "Total Inconsistency: " << global_inconsistency(V) << endl;
+	for (MessageQueue* player : V)
+	{
+		cout << player->board << endl;
+	}
+
+	//V[1]->hand_history.insert(*V[0]->hand_history.begin()); // Artificial inconsistency
+
+	vector<DominoInconsistency> domvec;
+
+	for (int p = 0; p < MAX_PROC_NUM; p++)
+	{
+		domvec.emplace_back(V[p]->dinc);
+	}
+
+	//cout << "Total Inconsistency: " << global_inconsistency(V) + total_inconsistency(calc_local_incons, domvec)  << endl;
+
+	float global = global_inconsistency(V);
+	float total = total_inconsistency(calc_local_incons, domvec);
+
+	cout << "Global Inconsistency: " << global << endl;
+	cout << "Total Inconsistency:  " << total << endl;
+
+	for (const auto& inc : I)
+	{
+		cout << "Turn " << inc.first << ": " << inc.second << endl;
+	}
 
 	for (auto& ref : V)
 		delete ref;
@@ -823,11 +1124,9 @@ Drawing tiles:
 */
 
 /*
-- fix the deadlock
-- check if the inconsistency metric is working
-- commit the working version, 
 
-- redo the changes of checking and confirming the seed 
+- Future work: without repairing the seed, if a player detects a tile placed by another that is in their hand, 
+start a consensus on the seed and send back the correct board history
 
 
 */

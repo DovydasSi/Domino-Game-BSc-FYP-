@@ -15,11 +15,14 @@ using namespace std;
 
 enum MESSAGE_TYPE
 {
-	TILE_PLACED_FRONT = 0,
+	INITIAL_TILE = 0,
+	TILE_PLACED_FRONT,
 	TILE_PLACED_BACK,
 	DRAW,
 	SEED,
-	INCONSISTENCY_CHECK
+	INCONSISTENCY_CHECK,
+	WINNER_CONFIRM,
+	BOARD_HISTORY
 };
 
 struct MessageQueue {
@@ -34,6 +37,7 @@ struct MessageQueue {
 
 	set<DominoPiece> hand_history;
 	DominoBoard board;
+	DominoInconsistency dinc;
 
 	MessageQueue(size_t i) : id{ i }, sent_counts(), received_counts(), inconsistency_counts() {}
 
