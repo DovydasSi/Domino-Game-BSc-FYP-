@@ -13,3 +13,6 @@ My paper uses this game to research the effects of network inconsistency in mult
 Inconsistency is injected by altering the brodcasted seed information for some of the players receiving it. The corrupted players play their games just like the others but, since their decks will be shuffled in a different order, they will have a different starting tile on their board and will attempt to participate in the game based on an incorect board.
 
 At the end of the game the program computes a score representing how much 'damage' has been done to the game because of the inconsisteny. This score is based off difference in players' boards, the hand histories (if different players have ever held the same tile in their hands), and the repeated tiles placed on the board of each player.
+
+
+Apart from the Equivallence classes and json header files, all of the code was written by me.
